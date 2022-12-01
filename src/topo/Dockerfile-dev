@@ -1,0 +1,44 @@
+FROM ubuntu:20.04 as build
+ARG dpdk_version=20.11.5
+ARG ovs_version=2.16.0
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get -y install build-essential python3-pip liblua5.3-dev \
+    cmake wget libnuma-dev pciutils libpcap-dev libelf-dev linux-headers-generic \
+    && pip3 install meson ninja pyelftools
+
+WORKDIR /opt
+
+# 将本地文件复制到docker中
+# 编译 DPDK，COPY 文件夹时必须指定目的文件夹名！
+COPY dpdk-stable-${dpdk_version} dpdk-stable-${dpdk_version}
+RUN cd dpdk-stable-${dpdk_version} \
+    && meson build \
+    && ninja -C build \
+    && ninja -C build install \
+    && cp -r build/lib /usr/local/
+
+# 编译 OVS, 注意文件名
+COPY ovs-${ovs_version} ovs-${ovs_version}
+RUN cd ovs-${ovs_version} \
+    && sh boot.sh \
+    && ./configure --with-dpdk=static CFLAGS="-Ofast -msse4.2 -mpopcnt" \
+    && make -j \
+    && make install
+
+#####################################################
+FROM ubuntu:20.04
+
+# 复制编译后的文件
+COPY --from=build /usr/local /usr/local/
+WORKDIR /root
+
+RUN apt-get update \
+    && apt-get -y --no-install-recommends install liblua5.3 libnuma-dev pciutils \
+    libpcap-dev python3 iproute2 net-tools iputils-ping vim iperf iftop tcpdump \
+    && ldconfig \
+    && echo 'export PATH=$PATH:/usr/local/share/openvswitch/scripts' | tee -a /root/.bashrc \
+    && echo 'export DB_SOCK=/usr/local/var/run/openvswitch/db.sock' | tee -a /root/.bashrc
+
+# 复制其他可执行文件
+COPY bin/* /usr/bin/

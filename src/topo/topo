@@ -5,6 +5,8 @@ controller="tcp:172.17.0.2:6653"
 path_file="../../result/ecmp_result"
 # ovs-dpdk 镜像
 ovs_image="ovsdpdk:latest"
+ovs_send="ovsdpdk:latest"
+ovs_recv="ovsdpdk:latest"
 onos_image="onos-timeout:2.5.9"
 
 # 创建容器
@@ -15,8 +17,16 @@ create_docker() {
 
     for i in {1..8}; do
         docker create -it --name=merge${i} --privileged -v /dev/hugepages:/dev/hugepages -v /root/run:/root/run ${ovs_image}
-        docker create -it --name=access${i} --privileged -v /dev/hugepages:/dev/hugepages -v /root/run:/root/run ${ovs_image}
     done
+
+    docker create -it --name=access1 --privileged -v /dev/hugepages:/dev/hugepages -v /root/run:/root/run ${ovs_image}
+    docker create -it --name=access2 --privileged -v /dev/hugepages:/dev/hugepages -v /root/run:/root/run ${ovs_image}
+    docker create -it --name=access3 --privileged -v /dev/hugepages:/dev/hugepages -v /root/run:/root/run ${ovs_image}
+    docker create -it --name=access4 --privileged -v /dev/hugepages:/dev/hugepages -v /root/run:/root/run ${ovs_image}
+    docker create -it --name=access5 --privileged -v /dev/hugepages:/dev/hugepages -v /root/run:/root/run ${ovs_image}
+    docker create -it --name=access6 --privileged -v /dev/hugepages:/dev/hugepages -v /root/run:/root/run ${ovs_image}
+    docker create -it --name=access7 --privileged -v /dev/hugepages:/dev/hugepages -v /root/run:/root/run ${ovs_image}
+    docker create -it --name=access8 --privileged -v /dev/hugepages:/dev/hugepages -v /root/run:/root/run ${ovs_image}
 }
 
 # 启动容器
@@ -90,6 +100,7 @@ ovs_init() {
     docker exec ${1} bash -c "/usr/local/share/openvswitch/scripts/ovs-ctl --no-ovsdb-server --db-sock=\"${DB_SOCK}\" start"
     docker exec ${1} bash -c "ovs-vsctl add-br br0 -- set bridge br0 datapath_type=netdev"
     docker exec ${1} bash -c "ovs-vsctl set bridge br0 other_config:datapath-id=0x000000000000${2}"
+    docker exec ${1} bash -c "ifconfig br0 up"
 
     # 不连接控制器注释下面两句
     # docker exec ${1} bash -c "ovs-vsctl set bridge br0 protocols=OpenFlow10,OpenFlow13"
@@ -97,7 +108,7 @@ ovs_init() {
 }
 
 # 启动各个容器上的 OVS
-start_ovs() {
+start_ovs_init() {
     # $1: 容器名 $2: datapath_id
     for i in {1..4}; do
         ovs_init core${i} 001${i}
@@ -123,6 +134,17 @@ stop_ovs() {
     done
 }
 
+# 关闭后再次启动 OVS
+start_ovs() {
+    for i in {1..4}; do
+        docker exec core${i} bash -c "/usr/local/share/openvswitch/scripts/ovs-ctl start"
+    done
+
+    for container in {merge,access}{1..8}; do
+        docker exec ${container} bash -c "/usr/local/share/openvswitch/scripts/ovs-ctl start"
+    done
+}
+
 # 重启 ONOS
 restart_onos() {
     docker stop onos-fat
@@ -144,7 +166,7 @@ restart_onos() {
 create_topo() {
     create_docker
     start_docker
-    start_ovs
+    start_ovs_init
     create_veth_coer_merge
     create_veth_merge_access
 }
@@ -159,10 +181,24 @@ add_flow() {
     python3 ./add_flow.py ${path_file}
 }
 
+del_flow() {
+    for i in {1..4}; do
+        docker exec core${i} bash -c "ovs-ofctl del-flows br0"
+    done
+
+    for container in {merge,access}{1..8}; do
+        docker exec ${container} bash -c "ovs-ofctl del-flows br0"
+    done
+}
+
 if [ -n "$1" ]
 then
     echo "execute ${1}"
     eval ${1}
 else
-    echo "需要选择执行的命令: create_topo / destroy_topo / add_flow"
+    echo "需要选择执行的命令: "
+    echo "\t create_topo: 创建整个拓扑结构，初始化OVS，但不包括下发流表！"
+    echo "\t destroy_topo: 直接删除容器，清理环境"
+    echo "\t add_flow: 根据指定的路由文件下发流表"
+    echo "\t del_flow: 删除所有节点配置的流表"
 fi
